@@ -160,8 +160,8 @@ ignore multiple cancelations of the same operation and return successfully if ca
 
 #### Request Headers
 
-The operation token received as a response to the Start Operation method. Must be delivered either via the `token` query
-param or the `Nexus-Operation-Token` header field.
+- `Nexus-Operation-Token`: The operation token received as a response to the Start Operation method. Must be delivered either via the
+  `token` query param or the `Nexus-Operation-Token` header field.
 
 #### Query Parameters
 
