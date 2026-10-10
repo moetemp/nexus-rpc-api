@@ -100,7 +100,7 @@ properties:
     type: string
     description: |
       An opaque, handler-defined position the operation reached, such as a cursor into a stream the operation writes.
-      Callers must not parse it.
+      Callers must not parse it. Its UTF-8 encoding must not exceed 1024 bytes.
 
   counter:
     type: [integer, string]
@@ -370,12 +370,13 @@ The caller answers a progress delivery as follows:
 - `200 OK`: The progress was accepted, or ignored because its counter is not higher than one already seen. The body is
   empty.
 - `404 Not Found`: The operation is no longer open, for example because its completion was already received.
-- Any other `4xx` status: The caller does not accept progress for this operation, for example because it does not
-  support progress, the body is malformed, or the metadata exceeds the size limit.
-- `429` and `5xx` statuses: The caller could not take the delivery now.
+- Any other `4xx` status except `408` and `429`: The caller does not accept progress for this operation, for example
+  because it does not support progress, the body is malformed, or the position or the metadata exceeds its size limit.
+- `408`, `429` and `5xx` statuses: The caller could not take the delivery now.
 
-Upon any `4xx` response, including `404`, the handler must stop sending progress to that callback. It still delivers the
-completion. Upon a `429` or `5xx` response, the handler may retry the delivery, or wait and send newer progress instead.
+Upon a `4xx` response other than `408` and `429`, including `404`, the handler must stop sending progress to that
+callback. It still delivers the completion. Upon a `408`, `429` or `5xx` response, the handler may retry the delivery,
+or wait and send newer progress instead.
 
 A caller that receives progress before it has received the operation's start response (the `201 Created` response to
 [Start Operation](#start-operation)) drops the delivery and answers `200 OK`. A later delivery carries the latest
