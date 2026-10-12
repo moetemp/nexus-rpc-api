@@ -87,6 +87,41 @@ properties:
       Describes the current state of the operation.
 ```
 
+### OperationProgress
+
+The `OperationProgress` object is the body of a [progress delivery](#progress-deliveries). It tells the caller that an
+asynchronous operation moved, not what it produced. The caller fetches any data through the handler's own APIs. The
+object MUST adhere to the following schema:
+
+```yaml
+type: object
+properties:
+  position:
+    type: string
+    description: |
+      An opaque, handler-defined position the operation reached, such as a cursor into a stream the operation writes.
+      Callers must not parse it. Its UTF-8 encoding must not exceed 1024 bytes.
+
+  counter:
+    type: [integer, string]
+    description: |
+      A positive integer the handler increases with every progress delivery of an operation. When a string, it holds the
+      integer in decimal. A handler SHOULD send the counter as a decimal string, and MUST do so when it exceeds
+      2^53 - 1, because many JSON parsers read numbers as doubles and lose precision above that value. A caller MUST
+      accept both forms. A caller keeps the delivery with the highest counter and ignores one at or below a counter it
+      has already seen, so deliveries need no ordering guarantee.
+
+  metadata:
+    type: object
+    additionalProperties:
+      type: string
+    description: |
+      Optional key-value pairs describing the progress. The UTF-8 encoded keys and values must not exceed 2048 bytes in
+      total.
+required:
+  - counter
+```
+
 ## Endpoint Descriptions
 
 ### Start Operation
@@ -311,6 +346,46 @@ For invoking a callback URL:
 - If state is `failed` or `canceled`, content type should be `application/json` and the body must have a serialized
   [`Failure`](#failure) object.
 - Upon successful completion delivery, the handler should reply with a `200 OK` status and an empty body.
+- Before completion, a handler may also invoke the URL with the `running` state to deliver progress. See
+  [Progress Deliveries](#progress-deliveries).
+
+### Progress Deliveries
+
+A handler may report the progress of an asynchronous operation by invoking the operation's callback URL with the
+`running` state before the operation completes. Progress deliveries are optional for both sides. A caller that does not
+support them refuses them, and the handler stops sending them.
+
+For delivering progress:
+
+- Issue a POST request to the caller-provided URL, with the same callback headers, `Nexus-Operation-Token`,
+  `Nexus-Operation-Start-Time` and `Nexus-Link` headers as a completion.
+- Include the `Nexus-Operation-State: running` header. Do not include a `Nexus-Operation-Close-Time` header.
+- Content type must be `application/json` and the body must have a serialized [`OperationProgress`](#operationprogress)
+  object.
+- The handler MUST keep at most one progress delivery of an operation in flight. Progress produced while a delivery is
+  in flight replaces any progress still waiting to be sent, so a burst of progress costs one delivery.
+- The handler MUST NOT delay or withhold the completion for a progress delivery, including one in flight. The completion
+  remains the only terminal delivery of an operation, and a caller that receives it ignores any progress that arrives
+  afterwards.
+
+The caller answers a progress delivery as follows:
+
+- `200 OK`: The progress was accepted, or ignored because its counter is not higher than one already seen. The body is
+  empty.
+- `404 Not Found`: The operation is no longer open, for example because its completion was already received.
+- Any other `4xx` status except `408` and `429`: The caller does not accept progress for this operation, for example
+  because it does not support progress, the body is malformed, or the position or the metadata exceeds its size limit.
+- `408`, `429` and `5xx` statuses: The caller could not take the delivery now.
+
+Upon a `4xx` response other than `408` and `429`, including `404`, the handler MUST stop sending progress to that
+callback. It still delivers the completion. Upon a `408`, `429` or `5xx` response, the handler may retry the delivery,
+or wait and send newer progress instead.
+
+A caller that receives progress before it has received the operation's start response (the `201 Created` response to
+[Start Operation](#start-operation)) drops the delivery and answers `200 OK`. The handler can't know when the caller saw
+the start response, so it doesn't resend the dropped progress, and it may send no more progress before the completion.
+Such a caller MUST treat the operation as possibly moved, and read from the operation's start position once the start
+response arrives.
 
 ### Security
 
